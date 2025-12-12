@@ -3,8 +3,10 @@ const cors = require('cors')
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express()
 require('dotenv').config();
+const crypto = require('crypto');
 const port = process.env.PORT || 3000
 const uri = `${process.env.MONGODB_URI}`;
+const stripe = require('stripe')(process.env.STRIPE_SECRET_ID);
 
 //middleware
 app.use(express.json());
@@ -19,6 +21,15 @@ const client = new MongoClient(uri, {
     }
 })
 
+function generateTrackingId() {
+    const prefix = "PRCL";
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const random = crypto.randomBytes(3).toString("hex").toUpperCase();
+
+    return `${prefix}-${date}-${random}`;
+}
+
+
 async function run() {
     try {
         await client.connect();
@@ -26,6 +37,7 @@ async function run() {
         const usersCollection = db.collection('users')
         const booksCollection = db.collection('books')
         const ordersCollection = db.collection('orders')
+        const paymentCollection = db.collection('payments')
 
         app.post('/users', async (req, res) => {
             const user = req.body;
@@ -71,19 +83,118 @@ async function run() {
         })
 
 
+        // payment related api
+        app.post('/confirming-payment-session', async (req, res) => {
+            const paymentInfo = req.body;
+            const amount = parseInt(paymentInfo.price) * 100;
+            const session = await stripe.checkout.sessions.create({
+                line_items: [
+                    {
+                        price_data: {
+                            currency: 'usd',
+                            unit_amount: amount,
+                            product_data: {
+                                name: `You are paying for: ${paymentInfo.bookName}`
+                            }
+                        },
+                        quantity: 1,
+                    },
+                ],
+                mode: 'payment',
+                metadata: {
+                    bookId: paymentInfo.bookId,
+                    orderId: paymentInfo.orderId,
+                },
+                customer_email: paymentInfo.customerEmail,
+                success_url: `${process.env.BASE_SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+                cancel_url: `${process.env.BASE_SITE_DOMAIN}/dashboard/payment-cancelled`,
+            })
+
+            res.send({ url: session.url })
+        })
+
+
+        //success message related api
+        app.patch('/payment-success', async (req, res) => {
+            const sessionId = req.query.session_id;
+
+            const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+            // console.log('session retrieve', session)
+
+            const transactionId = session.payment_intent;
+            const query = { transactionId: transactionId }
+
+            const paymentExist = await paymentCollection.findOne(query);
+            console.log(paymentExist);
+            if (paymentExist) {
+
+                return res.send({
+                    message: 'already exists',
+                    transactionId,
+                    trackingId: paymentExist.trackingId
+                })
+            }
+
+
+
+            const trackingId = generateTrackingId()
+
+            if (session.payment_status === 'paid') {
+                const id = session.metadata.orderId;
+                const query = { _id: new ObjectId(id) }
+                const update = {
+                    $set: {
+                        paymentStatus: 'paid',
+                        trackingId: trackingId
+                    }
+                }
+
+                const result = await ordersCollection.updateOne(query, update);
+
+                const payment = {
+                    amount: session.amount_total / 100,
+                    currency: session.currency,
+                    customerEmail: session.customer_email,
+                    // parcelId: session.metadata.parcelId,
+                    // parcelName: session.metadata.parcelName,
+                    bookId: session.metadata.bookId,
+                    transactionId: session.payment_intent,
+                    paymentStatus: session.payment_status,
+                    paidAt: new Date(),
+                    trackingId: trackingId
+                }
+
+                if (session.payment_status === 'paid') {
+                    const resultPayment = await paymentCollection.insertOne(payment)
+
+                    return res.send({
+                        success: true,
+                        modifyParcel: result,
+                        trackingId: trackingId,
+                        transactionId: session.payment_intent,
+                        paymentInfo: resultPayment
+                    })
+                }
+
+            }
+
+            return res.send({ success: false })
+        })
+
 
         //orders related apis
-        app.post('/orders', async (req, res)=>{
+        app.post('/orders', async (req, res) => {
             const order = req.body
-            order.createdAt= new Date()
+            order.createdAt = new Date()
             const result = await ordersCollection.insertOne(order)
             res.send(result)
         })
 
-        app.get('/orders/:email', async(req, res)=>{
+        app.get('/orders/:email', async (req, res) => {
             const email = req.params.email;
-            const query = {customerEmail: email}
-            
+            const query = { customerEmail: email }
+
             const result = await ordersCollection.find(query).toArray()
             res.send(result)
         })
