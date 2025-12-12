@@ -191,6 +191,14 @@ async function run() {
             res.send(result)
         })
 
+        app.patch('/orders/:id', async (req, res) => {
+            const id = req.params.id
+            const updatedInfo = req.body;
+            const query = { _id: new ObjectId(id) }
+            const result = await ordersCollection.updateOne(query, { $set: updatedInfo })
+            res.send(result)
+        })
+
         app.get('/orders/:email', async (req, res) => {
             const email = req.params.email;
             const query = { customerEmail: email }
