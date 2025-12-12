@@ -63,6 +63,14 @@ async function run() {
             res.send(result)
         })
 
+        app.patch('/books/:id', async (req, res) => {
+            const id = req.params.id
+            const query = { _id: new ObjectId(id) }
+            const updatedInfo = req.body;
+            const result = await booksCollection.updateOne(query, { $set: updatedInfo })
+            res.send(result)
+        })
+
         app.get('/books', async (req, res) => {
             const email = req.query.email;
             let query = {}
