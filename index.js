@@ -199,6 +199,12 @@ async function run() {
             res.send(result)
         })
 
+        app.get('/orders', async (req, res) => {
+            const result = await ordersCollection.find().toArray();
+            res.send(result);
+        })
+
+
         app.patch('/orders/:id', async (req, res) => {
             const id = req.params.id
             const updatedInfo = req.body;
