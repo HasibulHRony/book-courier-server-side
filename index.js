@@ -8,9 +8,39 @@ const port = process.env.PORT || 3000
 const uri = `${process.env.MONGODB_URI}`;
 const stripe = require('stripe')(process.env.STRIPE_SECRET_ID);
 
+
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./book_courier_sdk_secrate.json");
+
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
+
+
+
+
 //middleware
 app.use(express.json());
 app.use(cors());
+
+const verifyFBToken = async (req, res, next) => {
+    const token = req.headers.authorization;
+    if (!token) {
+        return res.status(401).send({ message: 'unauthorized access' })
+    }
+    try {
+        const idToken = token.split(' ')[1];
+        const decoded = await admin.auth().verifyIdToken(idToken);
+        console.log('decoded in the token', decoded);
+        req.decoded_email = decoded.email;
+        next();
+    }
+    catch (err) {
+        return res.status(401).send({ message: 'unauthorized access' })
+    }
+}
+
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
@@ -206,15 +236,49 @@ async function run() {
 
 
         app.patch('/orders/:id', async (req, res) => {
-            const id = req.params.id
-            const updatedInfo = req.body;
-            const query = { _id: new ObjectId(id) }
-            const result = await ordersCollection.updateOne(query, { $set: updatedInfo })
-            res.send(result)
-        })
+            const id = req.params.id;
+            const { orderStatus, isCanceled } = req.body;
 
-        app.get('/orders/:email', async (req, res) => {
+            const query = { _id: new ObjectId(id) };
+            const updateDoc = { $set: {} };
+
+            // ----- Task 1: Update Status -----
+            if (orderStatus) {
+                const allowedStatus = ["Pending", "Shifted", "Delivered"];
+
+                if (!allowedStatus.includes(orderStatus)) {
+                    return res.status(400).send({ message: "Invalid status value" });
+                }
+
+                updateDoc.$set.orderStatus = orderStatus;
+            }
+
+            // ----- Task 2: Cancel Order -----
+            if (isCanceled === true) {
+                updateDoc.$set.isCanceled = true;
+                updateDoc.$set.orderStatus = "Cancelled";
+            }
+
+            // Prevent empty update
+            if (Object.keys(updateDoc.$set).length === 0) {
+                return res.status(400).send({ message: "No valid update field provided" });
+            }
+
+            updateDoc.$set.updatedAt = new Date();
+
+            const result = await ordersCollection.updateOne(query, updateDoc);
+            res.send(result);
+        });
+
+
+
+        app.get('/orders/:email', verifyFBToken, async (req, res) => {
             const email = req.params.email;
+
+            if (email !== req.decoded_email) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+
             const query = { customerEmail: email }
 
             const result = await ordersCollection.find(query).toArray()
