@@ -32,7 +32,7 @@ const verifyFBToken = async (req, res, next) => {
     try {
         const idToken = token.split(' ')[1];
         const decoded = await admin.auth().verifyIdToken(idToken);
-        console.log('decoded in the token', decoded);
+
         req.decoded_email = decoded.email;
         next();
     }
@@ -84,14 +84,21 @@ async function run() {
             res.send(result);
         })
 
-        app.get('/users', async(req, res)=>{
+        app.get('/users', verifyFBToken, async (req, res) => {
             const result = await usersCollection.find().toArray()
             res.send(result)
         })
 
-        app.patch('/users/:id', async(req, res)=>{
+        app.get('/users/:email/role', verifyFBToken, async (req, res) => {
+            const email = req.params.email;
+            const query = { email }
+            const user = await usersCollection.findOne(query);
+            res.send({ role: user?.role || 'user' })
+        })
+
+        app.patch('/users/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id
-            const query = { _id: new ObjectId(id)}
+            const query = { _id: new ObjectId(id) }
             const updatedInfo = req.body
             const finalUpdatedInfo = {
                 $set: updatedInfo
@@ -103,14 +110,14 @@ async function run() {
 
         //books related api
 
-        app.post('/books', async (req, res) => {
+        app.post('/books', verifyFBToken, async (req, res) => {
             const book = req.body;
             book.createdAt = new Date()
             const result = await booksCollection.insertOne(book)
             res.send(result)
         })
 
-        app.patch('/books/:id', async (req, res) => {
+        app.patch('/books/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id
             const query = { _id: new ObjectId(id) }
             const updatedInfo = req.body;
@@ -118,19 +125,60 @@ async function run() {
             res.send(result)
         })
 
+        app.delete('/books/:id', verifyFBToken, async (req, res) => {
+            const id = req.params.id;
+
+            const bookQuery = { _id: new ObjectId(id) };
+            const orderQuery = { bookId: id };
+
+            const bookResult = await booksCollection.deleteOne(bookQuery);
+
+            if (bookResult.deletedCount === 0) {
+                return res.status(404).send({ message: "Book not found" });
+            }
+
+            const orderResult = await ordersCollection.deleteMany(orderQuery);
+
+            res.send({
+                success: true,
+                bookDeleted: bookResult.deletedCount,
+                ordersDeleted: orderResult.deletedCount
+            });
+        });
+
+
         app.get('/books', async (req, res) => {
+
             const email = req.query.email;
+            const limit = parseInt(req.query.limit)
+
+            const searchText = req.query.searchText;
+
             let query = {}
+            // let info = {}
             if (email) {
                 query = { librarianEmail: email }
             }
 
-            const result = await booksCollection.find(query).toArray()
+            let cursor = booksCollection.find(query).sort({ createdAt: -1 })
+            if (limit) {
+                cursor = cursor.limit(limit)
+            }
+
+            
+            if (searchText) {
+                query.$or = [
+                    { bookName: { $regex: searchText, $options: 'i' } },
+                    { librarianEmail: { $regex: searchText, $options: 'i' } },
+                ]
+                cursor = booksCollection.find(query)
+            }
+            const result = await cursor.toArray()
             res.send(result)
 
         })
 
-        app.get('/books/:_id', async (req, res) => {
+        app.get('/books/:_id', verifyFBToken, async (req, res) => {
             const id = req.params._id;
             const query = { _id: new ObjectId(id) }
             const result = await booksCollection.findOne(query)
@@ -141,7 +189,17 @@ async function run() {
         // payment related api
         app.post('/confirming-payment-session', async (req, res) => {
             const paymentInfo = req.body;
-            const amount = parseInt(paymentInfo.price) * 100;
+
+
+            let amount = paymentInfo.price
+
+            // if (!price || isNaN(price)) {
+            //     return res.status(400).send({ message: "Invalid price" });
+            // }
+
+
+            amount = Math.round(amount * 100);
+
             const session = await stripe.checkout.sessions.create({
                 line_items: [
                     {
@@ -175,13 +233,13 @@ async function run() {
 
             const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-            // console.log('session retrieve', session)
+
 
             const transactionId = session.payment_intent;
             const query = { transactionId: transactionId }
 
             const paymentExist = await paymentCollection.findOne(query);
-            console.log(paymentExist);
+
             if (paymentExist) {
 
                 return res.send({
@@ -239,20 +297,20 @@ async function run() {
 
 
         //orders related apis
-        app.post('/orders', async (req, res) => {
+        app.post('/orders', verifyFBToken, async (req, res) => {
             const order = req.body
             order.createdAt = new Date()
             const result = await ordersCollection.insertOne(order)
             res.send(result)
         })
 
-        app.get('/orders', async (req, res) => {
+        app.get('/orders', verifyFBToken, async (req, res) => {
             const result = await ordersCollection.find().toArray();
             res.send(result);
         })
 
 
-        app.patch('/orders/:id', async (req, res) => {
+        app.patch('/orders/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id;
             const { orderStatus, isCanceled } = req.body;
 
