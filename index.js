@@ -11,7 +11,9 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_ID);
 
 const admin = require("firebase-admin");
 
-const serviceAccount = require("./book_courier_sdk_secrate.json");
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
+
 
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
@@ -62,7 +64,7 @@ function generateTrackingId() {
 
 async function run() {
     try {
-        await client.connect();
+        // await client.connect();
         const db = client.db('bookCourierDb')
         const usersCollection = db.collection('users')
         const booksCollection = db.collection('books')
@@ -165,7 +167,7 @@ async function run() {
                 cursor = cursor.limit(limit)
             }
 
-            
+
             if (searchText) {
                 query.$or = [
                     { bookName: { $regex: searchText, $options: 'i' } },
@@ -361,8 +363,8 @@ async function run() {
         })
 
 
-        await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+        // await client.db("admin").command({ ping: 1 });
+        // console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
         // Ensures that the client will close when you finish/error
         // await client.close();
